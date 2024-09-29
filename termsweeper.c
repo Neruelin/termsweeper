@@ -1,14 +1,21 @@
 #include <stdio.h>
 #include <stdlib.h>
-#define SCREENWIDTH 50
-#define SCREENHEIGHT 20
+#include <GL/freeglut.h>
+
+#define GRIDWIDTH 10
+#define GRIDHEIGHT 10
+#define CHARWIDTH 8
+#define CHARHEIGHT 13
+#define SCREENWIDTH (GRIDWIDTH * CHARWIDTH)
+#define SCREENHEIGHT (GRIDHEIGHT * CHARHEIGHT)
 #define THRESHOLD 90
 #define MEMDEBUG 0
+
 
 int longestDigits = 0;
 
 int initDigits() {
-    for (int temp = 1; temp < SCREENWIDTH; temp *= 10) {
+    for (int temp = 1; temp < GRIDWIDTH; temp *= 10) {
         longestDigits++;
     }
 }
@@ -35,12 +42,15 @@ void mfree(void* ptr) {
 // STRUCTS
 
 typedef struct {
-    char displayData[SCREENHEIGHT][SCREENWIDTH];
-    int mineData[SCREENHEIGHT - 2][SCREENWIDTH - 2];
-    int adjMineData[SCREENHEIGHT - 2][SCREENWIDTH - 2];
+    char displayData[GRIDHEIGHT][GRIDWIDTH];
+    int mineData[GRIDHEIGHT - 2][GRIDWIDTH - 2];
+    int adjMineData[GRIDHEIGHT - 2][GRIDWIDTH - 2];
     int minesClicked;
     int tilesRevealed;
     int totalMines;
+    int cursorGridX;
+    int cursorGridY;
+    int running;
 } GameData;
 
 typedef struct LLNode {
@@ -57,16 +67,16 @@ typedef struct {
 // STRUCT FUNCTIONS
 
 void GameData_initDisplayData(GameData* gd) {
-    for (int i = 0; i < SCREENHEIGHT; i++) {
-        for (int j = 0; j < SCREENWIDTH; j++) {
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
             gd->displayData[i][j] = ' ';
         }
     }
 }
 
 void GameData_initGameData(GameData* gd) {
-    for (int i = 0; i < SCREENHEIGHT - 2; i++) {
-        for (int j = 0; j < SCREENWIDTH - 2; j++) {
+    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
+        for (int j = 0; j < GRIDWIDTH - 2; j++) {
             gd->mineData[i][j] = (rand() % 100 > THRESHOLD) ? 1 : 0;
             if (gd->mineData[i][j]) {
                 gd->totalMines++;
@@ -75,15 +85,15 @@ void GameData_initGameData(GameData* gd) {
         }
         // break;
     }
-    for (int i = 0; i < SCREENHEIGHT - 2; i++) {
-        for (int j = 0; j < SCREENWIDTH - 2; j++) {
+    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
+        for (int j = 0; j < GRIDWIDTH - 2; j++) {
             int mines = 0;
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     if (dx == 0 && dy == 0) {
                         continue;
                     }
-                    if (i + dy < 0 || i + dy >= SCREENHEIGHT - 2 || j + dx < 0 || j + dx >= SCREENWIDTH - 2) {
+                    if (i + dy < 0 || i + dy >= GRIDHEIGHT - 2 || j + dx < 0 || j + dx >= GRIDWIDTH - 2) {
                         continue;
                     }
                     if (gd->mineData[i+dy][j+dx]) {
@@ -180,7 +190,7 @@ void resetText() {
 
 void clearLine() {
     printf("\r");
-    for (int j = 0; j < SCREENWIDTH * 2 + longestDigits + 1; j++) {
+    for (int j = 0; j < GRIDWIDTH * 2 + longestDigits + 1; j++) {
         printf(" ");
     }
     printf("\r");
@@ -192,7 +202,7 @@ void clearInputAction() {
 }
 
 void clearScreen() {
-    for (int i = 0; i < SCREENHEIGHT + longestDigits; i++) {
+    for (int i = 0; i < GRIDHEIGHT + longestDigits; i++) {
         moveCursorUp();
         clearLine();
     }
@@ -205,7 +215,7 @@ void displayBottomAxis() {
     for (int i = 0; i < longestDigits + 2; i++) {
         moveCursorRight();
     }
-    for (int i = 0; i < SCREENWIDTH - 2; i++) {
+    for (int i = 0; i < GRIDWIDTH - 2; i++) {
         if (i == 0) {
             printf("0 ");
             continue;
@@ -236,13 +246,13 @@ void displayBottomAxis() {
 }
 
 void display(GameData* gd) {
-    for (int i = 0; i < SCREENHEIGHT; i++) {
-        if (i != 0 && i != SCREENHEIGHT - 1) {
-            printf("%2d ", SCREENHEIGHT - 2 - i);
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        if (i != 0 && i != GRIDHEIGHT - 1) {
+            printf("%2d ", GRIDHEIGHT - 2 - i);
         } else {
             printf("   ");
         }
-        for (int j = 0; j < SCREENWIDTH; j++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
             text_red();
             if (gd->displayData[i][j] != ' ') {
                 bg_white();
@@ -259,17 +269,18 @@ void display(GameData* gd) {
 }
 
 void makeBox(GameData* gd) {
-    for (int i = 0; i < SCREENHEIGHT; i++) {
-        if (i == 0 || i + 1 == SCREENHEIGHT) {
-            for (int j = 0; j < SCREENWIDTH; j++) {
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        if (i == 0 || i + 1 == GRIDHEIGHT) {
+            for (int j = 0; j < GRIDWIDTH; j++) {
                 gd->displayData[i][j] = '#';
             }
         } else {
             gd->displayData[i][0] = '#';
-            gd->displayData[i][SCREENWIDTH - 1] = '#';
+            gd->displayData[i][GRIDWIDTH - 1] = '#';
         }
     }
 }
+
 
 // GAME LOGIC
 
@@ -284,17 +295,17 @@ char getDisplayedChar(GameData* gd, int gr, int gc) {
 }
 
 void revealAll(GameData* gd) {
-    for (int gr = 0; gr < SCREENHEIGHT - 2; gr++) {
-        for (int gc = 0; gc < SCREENWIDTH - 2; gc++) {
+    for (int gr = 0; gr < GRIDHEIGHT - 2; gr++) {
+        for (int gc = 0; gc < GRIDWIDTH - 2; gc++) {
             gd->displayData[gr + 1][gc + 1] = getDisplayedChar(gd, gr, gc);
         }
     }
 }
 
 void revealBFS(GameData* gd, int gr, int gc) {
-    int visited[SCREENHEIGHT - 2][SCREENWIDTH - 2];
-    for (int i = 0; i < SCREENHEIGHT - 2; i++) {
-        for (int j = 0; j < SCREENWIDTH - 2; j++) {
+    int visited[GRIDHEIGHT - 2][GRIDWIDTH - 2];
+    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
+        for (int j = 0; j < GRIDWIDTH - 2; j++) {
             visited[i][j] = 0;
         }
     }
@@ -319,7 +330,7 @@ void revealBFS(GameData* gd, int gr, int gc) {
                         continue;
                     }
 
-                    if (currentNode->gr + deltr < 0 || currentNode->gr + deltr >= SCREENHEIGHT - 2 || currentNode->gc + deltc < 0 || currentNode->gc + deltc >= SCREENWIDTH - 2) {
+                    if (currentNode->gr + deltr < 0 || currentNode->gr + deltr >= GRIDHEIGHT - 2 || currentNode->gc + deltc < 0 || currentNode->gc + deltc >= GRIDWIDTH - 2) {
                         continue;
                     }
 
@@ -337,10 +348,10 @@ void revealBFS(GameData* gd, int gr, int gc) {
     }
 }
 
-int handle(GameData* gd, int x, int y) {
-    if (x >= 0 && x < SCREENWIDTH - 2 && y >= 0 && y < SCREENHEIGHT - 2) {
+static int handle(GameData* gd, int x, int y) {
+    if (x >= 0 && x < GRIDWIDTH - 2 && y >= 0 && y < GRIDHEIGHT - 2) {
         // convert to game perspective r,c
-        int gr = SCREENHEIGHT - 2 - y - 1;
+        int gr = GRIDHEIGHT - 2 - y - 1;
         int gc = x;
 
         // if mine is picked, reveal all end program
@@ -352,39 +363,104 @@ int handle(GameData* gd, int x, int y) {
 
         revealBFS(gd, gr, gc);
 
-        if (gd->tilesRevealed + gd->totalMines == (SCREENHEIGHT - 2) * (SCREENWIDTH - 2)) {
+        if (gd->tilesRevealed + gd->totalMines == (GRIDHEIGHT - 2) * (GRIDWIDTH - 2)) {
             return 0;
         }
     }
     return 1;
 }
 
+
+// GRAPHICS UTILS
+
+int xPixel(float screenX) {
+    return (int) (SCREENWIDTH * screenX);
+}
+int yPixel(float screenX) {
+    return (int) (SCREENHEIGHT * screenX);
+}
+float xScreen(float pixelX) {
+    return ((pixelX / SCREENWIDTH) * 2) - 1.0;
+}
+float yScreen(float pixelY) {
+    return  ((-pixelY / SCREENHEIGHT) * 2) + 1.0;
+}
+
+// GRAPHICS FUNCS
+
+static void handleMouseClick(int button, int state, int x, int y, void* gd_ptr) {
+    GameData* gd = (GameData*) gd_ptr;
+
+    gd->running = handle(gd, gd->cursorGridX - 1, GRIDHEIGHT - 2 - gd->cursorGridY);
+}
+
+static void handleMouseMove(int mouseX, int mouseY, void* gd_ptr) {
+    GameData* gd = (GameData*) gd_ptr;
+    int gridX = (mouseX) / CHARWIDTH;
+    int gridY = (mouseY) / CHARHEIGHT;
+    gd->cursorGridX = gridX;
+    gd->cursorGridY = gridY;
+}
+
+static void graphicsDisplay(void* gd_ptr) {
+    GameData* gd = (GameData*) gd_ptr;
+
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
+	glClear(GL_COLOR_BUFFER_BIT);
+
+    int pixelX = 0;
+    int pixelY = 13;
+    int dy = 13;
+
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        glRasterPos2f(xScreen(pixelX), yScreen(pixelY + (dy * i)));
+        for (int j = 0; j < GRIDWIDTH; j++) {
+            glutBitmapCharacter(GLUT_BITMAP_8_BY_13, gd->displayData[i][j]);
+        }
+    }
+
+    if (gd->cursorGridX > 0 && (gd->cursorGridX + 1) < GRIDWIDTH && (gd->cursorGridY + 1) > 1 && (gd->cursorGridY + 1) < GRIDHEIGHT) {
+        glRasterPos2f(xScreen(CHARWIDTH * gd->cursorGridX), yScreen(CHARHEIGHT * (gd->cursorGridY + 1)));
+        glutBitmapCharacter(GLUT_BITMAP_8_BY_13, '@');
+    }
+
+    glutSwapBuffers();
+}
+
+void initGraphics(GameData* gd) {
+    glutInitWindowSize(SCREENWIDTH,SCREENHEIGHT);
+    glutInitWindowPosition(40,40);
+    glutInitDisplayMode(GLUT_RGB | GLUT_DOUBLE);
+    int pargc = 0;
+    glutInit(&pargc, NULL);
+    int mainWindow = glutCreateWindow("gl");
+    glutDisplayFuncUcall(graphicsDisplay, (void*) gd);
+    glutMouseFuncUcall(handleMouseClick, (void*) gd);
+    glutPassiveMotionFuncUcall(handleMouseMove, (void*) gd);
+}
+
 void loop(GameData* gd) {
-    int running = 1;
-    while (running) {
+    gd->running = 1;
+    while (gd->running) {
 #if MEMDEBUG == 1
         printf("malloc/frees: %d %d\n", mallocsCount, freesCount);
 #endif
-        display(gd);
-
-        int x;
-        int y;
-        scanf("%d %d", &x, &y); // user perspective (0, 0) in bottom left
-        clearInputAction();
-
-        running = handle(gd, x, y);
-
-        clearScreen();
+        glutPostRedisplay();
+        glutMainLoopEvent();
     }
 #if MEMDEBUG == 1
     printf("malloc/frees: %d %d\n", mallocsCount, freesCount);
 #endif
-    display(gd);
+    // display(gd);
+    glutPostRedisplay();
+    glutMainLoopEvent();
     if (gd->minesClicked) {
         printf("You Lose\n");
     } else {
         printf("You win\n");
     }
+    printf("Press enter to close...\n");
+    getchar();
 }
 
 int main() {
@@ -397,6 +473,8 @@ int main() {
     GameData_initGameData(&gd);
 
     makeBox(&gd);
+
+    initGraphics(&gd);
     
     loop(&gd);
 
