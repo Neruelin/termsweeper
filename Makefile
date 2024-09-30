@@ -15,10 +15,16 @@ build_term: build_freeglut
 build_term_only:
 	gcc termsweeper.c -o termsweeper -lGL -lglut
 
+build_term_only_optimized:
+	gcc termsweeper.c -o termsweeper -Ofast -lGL -lglut
+
 run_gl: build_gl_only
 	./gl
 
 run_term: build_term_only
+	./termsweeper
+
+run_term_optimized: build_term_only_optimized
 	./termsweeper
 
 run: run_gl

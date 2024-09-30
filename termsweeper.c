@@ -1,16 +1,24 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <GL/freeglut.h>
 
-#define GRIDWIDTH 10
-#define GRIDHEIGHT 10
+#define GRIDWIDTH 20
+#define GRIDHEIGHT 20
 #define CHARWIDTH 8
 #define CHARHEIGHT 13
-#define SCREENWIDTH (GRIDWIDTH * CHARWIDTH)
-#define SCREENHEIGHT (GRIDHEIGHT * CHARHEIGHT)
-#define THRESHOLD 90
+#define CELLWIDTH 25
+#define CELLHEIGHT 25
+#define SCREENWIDTH (GRIDWIDTH * CELLWIDTH)
+#define SCREENHEIGHT (GRIDHEIGHT * CELLHEIGHT)
+#define THRESHOLD 85
 #define MEMDEBUG 0
 
+#define COLOR_BLACK 0.0,0.0,0.0
+#define COLOR_WHITE 1.0,1.0,1.0
+#define COLOR_GREY 0.3,0.3,0.3
+#define COLOR_RED 1.0,0.0,0.0
+#define COLOR_BLUE 0.0,0.0,1.0
 
 int longestDigits = 0;
 
@@ -43,14 +51,17 @@ void mfree(void* ptr) {
 
 typedef struct {
     char displayData[GRIDHEIGHT][GRIDWIDTH];
-    int mineData[GRIDHEIGHT - 2][GRIDWIDTH - 2];
-    int adjMineData[GRIDHEIGHT - 2][GRIDWIDTH - 2];
+    int update[GRIDHEIGHT][GRIDWIDTH];
+    int mineData[GRIDHEIGHT][GRIDWIDTH];
+    int adjMineData[GRIDHEIGHT][GRIDWIDTH];
     int minesClicked;
     int tilesRevealed;
     int totalMines;
     int cursorGridX;
     int cursorGridY;
     int running;
+    double lastTime;
+    int repaint;
 } GameData;
 
 typedef struct LLNode {
@@ -75,25 +86,23 @@ void GameData_initDisplayData(GameData* gd) {
 }
 
 void GameData_initGameData(GameData* gd) {
-    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
-        for (int j = 0; j < GRIDWIDTH - 2; j++) {
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
             gd->mineData[i][j] = (rand() % 100 > THRESHOLD) ? 1 : 0;
             if (gd->mineData[i][j]) {
                 gd->totalMines++;
-                // break;
             }
         }
-        // break;
     }
-    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
-        for (int j = 0; j < GRIDWIDTH - 2; j++) {
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
             int mines = 0;
             for (int dx = -1; dx <= 1; dx++) {
                 for (int dy = -1; dy <= 1; dy++) {
                     if (dx == 0 && dy == 0) {
                         continue;
                     }
-                    if (i + dy < 0 || i + dy >= GRIDHEIGHT - 2 || j + dx < 0 || j + dx >= GRIDWIDTH - 2) {
+                    if (i + dy < 0 || i + dy >= GRIDHEIGHT || j + dx < 0 || j + dx >= GRIDWIDTH) {
                         continue;
                     }
                     if (gd->mineData[i+dy][j+dx]) {
@@ -104,6 +113,22 @@ void GameData_initGameData(GameData* gd) {
             gd->adjMineData[i][j] = mines;
         }
     }
+}
+
+void GameData_initUpdate(GameData* gd) {
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
+            gd->update[i][j] = 1;
+        }
+    }
+}
+
+void GameData_init(GameData* gd) {
+    gd->lastTime = 0;
+    gd->repaint = 1;
+    GameData_initDisplayData(gd);
+    GameData_initGameData(gd);
+    GameData_initUpdate(gd);
 }
 
 LLNode* LLNode_new(int gr, int gc) {
@@ -295,17 +320,18 @@ char getDisplayedChar(GameData* gd, int gr, int gc) {
 }
 
 void revealAll(GameData* gd) {
-    for (int gr = 0; gr < GRIDHEIGHT - 2; gr++) {
-        for (int gc = 0; gc < GRIDWIDTH - 2; gc++) {
-            gd->displayData[gr + 1][gc + 1] = getDisplayedChar(gd, gr, gc);
+    for (int gr = 0; gr < GRIDHEIGHT; gr++) {
+        for (int gc = 0; gc < GRIDWIDTH; gc++) {
+            gd->displayData[gr][gc] = getDisplayedChar(gd, gr, gc);
+            gd->update[gr][gc] = 1;
         }
     }
 }
 
 void revealBFS(GameData* gd, int gr, int gc) {
-    int visited[GRIDHEIGHT - 2][GRIDWIDTH - 2];
-    for (int i = 0; i < GRIDHEIGHT - 2; i++) {
-        for (int j = 0; j < GRIDWIDTH - 2; j++) {
+    int visited[GRIDHEIGHT][GRIDWIDTH];
+    for (int i = 0; i < GRIDHEIGHT; i++) {
+        for (int j = 0; j < GRIDWIDTH; j++) {
             visited[i][j] = 0;
         }
     }
@@ -317,11 +343,12 @@ void revealBFS(GameData* gd, int gr, int gc) {
     while (q.front) {
         LLNode* currentNode = Deque_popFront(&q);
         
-        if (gd->displayData[currentNode->gr + 1][currentNode->gc + 1] == ' ') {
+        if (gd->displayData[currentNode->gr][currentNode->gc] == ' ') {
             gd->tilesRevealed++;
         }
 
-        gd->displayData[currentNode->gr + 1][currentNode->gc + 1] = getDisplayedChar(gd, currentNode->gr, currentNode->gc);
+        gd->displayData[currentNode->gr][currentNode->gc] = getDisplayedChar(gd, currentNode->gr, currentNode->gc);
+        gd->update[currentNode->gr][currentNode->gc] = 1;
 
         if (gd->adjMineData[currentNode->gr][currentNode->gc] == 0) {
             for (int deltr = -1; deltr <= 1; deltr++) {
@@ -330,7 +357,7 @@ void revealBFS(GameData* gd, int gr, int gc) {
                         continue;
                     }
 
-                    if (currentNode->gr + deltr < 0 || currentNode->gr + deltr >= GRIDHEIGHT - 2 || currentNode->gc + deltc < 0 || currentNode->gc + deltc >= GRIDWIDTH - 2) {
+                    if (currentNode->gr + deltr < 0 || currentNode->gr + deltr >= GRIDHEIGHT || currentNode->gc + deltc < 0 || currentNode->gc + deltc >= GRIDWIDTH) {
                         continue;
                     }
 
@@ -349,9 +376,9 @@ void revealBFS(GameData* gd, int gr, int gc) {
 }
 
 static int handle(GameData* gd, int x, int y) {
-    if (x >= 0 && x < GRIDWIDTH - 2 && y >= 0 && y < GRIDHEIGHT - 2) {
+    if (x >= 0 && x < GRIDWIDTH && y >= 0 && y < GRIDHEIGHT) {
         // convert to game perspective r,c
-        int gr = GRIDHEIGHT - 2 - y - 1;
+        int gr = y;
         int gc = x;
 
         // if mine is picked, reveal all end program
@@ -363,7 +390,9 @@ static int handle(GameData* gd, int x, int y) {
 
         revealBFS(gd, gr, gc);
 
-        if (gd->tilesRevealed + gd->totalMines == (GRIDHEIGHT - 2) * (GRIDWIDTH - 2)) {
+        printf("reveal state %d %d\n", gd->tilesRevealed, gd->totalMines);
+
+        if (gd->tilesRevealed + gd->totalMines == (GRIDHEIGHT * GRIDWIDTH)) {
             return 0;
         }
     }
@@ -389,42 +418,101 @@ float yScreen(float pixelY) {
 // GRAPHICS FUNCS
 
 static void handleMouseClick(int button, int state, int x, int y, void* gd_ptr) {
+    if (state != GLUT_DOWN) return;
     GameData* gd = (GameData*) gd_ptr;
-
-    gd->running = handle(gd, gd->cursorGridX - 1, GRIDHEIGHT - 2 - gd->cursorGridY);
+    printf("clicked %d %d\n", gd->cursorGridX, gd->cursorGridY);
+    gd->running = handle(gd, gd->cursorGridX, gd->cursorGridY);
+    gd->repaint = 1;
 }
 
 static void handleMouseMove(int mouseX, int mouseY, void* gd_ptr) {
     GameData* gd = (GameData*) gd_ptr;
-    int gridX = (mouseX) / CHARWIDTH;
-    int gridY = (mouseY) / CHARHEIGHT;
+    int gridX = mouseX / CELLWIDTH;
+    int gridY = mouseY / CELLHEIGHT;
+    gd->update[gd->cursorGridY][gd->cursorGridX] = 1;
     gd->cursorGridX = gridX;
     gd->cursorGridY = gridY;
+    gd->repaint = 1;
+}
+
+void quadDraw(int pixelX, int pixelY, int pixelW, int pixelH) {
+    glBegin(GL_QUADS);
+    float x = xScreen(pixelX);
+    float y = yScreen(pixelY);
+    const float w = (2.0 * pixelW) / SCREENWIDTH ;
+    const float h = (2.0 * pixelH) / SCREENHEIGHT;
+    glVertex3f(x,y,0);
+    glVertex3f(x+w,y,0);
+    glVertex3f(x+w,y-h,0);
+    glVertex3f(x,y-h,0);
+    glEnd();
+}
+
+void cellDraw(int cellX, int cellY, float r, float g, float b) {
+    glColor3f(r,g,b);
+    quadDraw(cellX * CELLWIDTH, cellY * CELLHEIGHT, CELLWIDTH, CELLHEIGHT);
+}
+
+void cellHighlightDraw(int cellX, int cellY, float r, float g, float b) {
+    glColor3f(r,g,b);
+    quadDraw(cellX * CELLWIDTH + 5, cellY * CELLHEIGHT + 5, CELLWIDTH - 10, CELLHEIGHT - 10);
+}
+
+void charDraw(int pixelX, int pixelY, char c) {
+    glColor3f(1.0, 1.0, 1.0);
+    glRasterPos2f(xScreen(pixelX), yScreen(pixelY));
+    glutBitmapCharacter(GLUT_BITMAP_8_BY_13, c);
 }
 
 static void graphicsDisplay(void* gd_ptr) {
+    const double t = glutGet(GLUT_ELAPSED_TIME) / 1000.0;
+    
     GameData* gd = (GameData*) gd_ptr;
 
-    glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
-	glClear(GL_COLOR_BUFFER_BIT);
+    const double delta = t - gd->lastTime;
+    gd->lastTime = t;
 
-    int pixelX = 0;
-    int pixelY = 13;
-    int dy = 13;
+    if (gd->repaint) {
+        gd->repaint = 0;
 
-    for (int i = 0; i < GRIDHEIGHT; i++) {
-        glRasterPos2f(xScreen(pixelX), yScreen(pixelY + (dy * i)));
-        for (int j = 0; j < GRIDWIDTH; j++) {
-            glutBitmapCharacter(GLUT_BITMAP_8_BY_13, gd->displayData[i][j]);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f );
+        // glClear(GL_COLOR_BUFFER_BIT);
+
+        int pixelX = 0;
+        int pixelY = 13;
+        int dx = 8;
+        int dy = 13;
+
+        int quadsDrawn = 0;
+
+        double drawStart = glutGet(GLUT_ELAPSED_TIME);
+        for (int i = 0; i < GRIDHEIGHT; i++) {
+            for (int j = 0; j < GRIDWIDTH; j++) {
+                if (gd->update[i][j] == 0) continue;
+                gd->update[i][j] = 0; 
+
+                if (gd->displayData[i][j] == ' ') {
+                    cellDraw(j, i, COLOR_GREY);
+                } else if (gd->displayData[i][j] == '.') {
+                    cellDraw(j, i, COLOR_BLACK);
+                } else if (gd->displayData[i][j] == '@') {
+                    cellDraw(j, i, COLOR_RED);
+                } else {
+                    cellDraw(j, i, 0.125 * gd->adjMineData[i][j], 0.0, 0.0);
+                }
+
+                quadsDrawn++;
+            }
         }
-    }
 
-    if (gd->cursorGridX > 0 && (gd->cursorGridX + 1) < GRIDWIDTH && (gd->cursorGridY + 1) > 1 && (gd->cursorGridY + 1) < GRIDHEIGHT) {
-        glRasterPos2f(xScreen(CHARWIDTH * gd->cursorGridX), yScreen(CHARHEIGHT * (gd->cursorGridY + 1)));
-        glutBitmapCharacter(GLUT_BITMAP_8_BY_13, '@');
-    }
+        double drawEnd = glutGet(GLUT_ELAPSED_TIME);
 
-    glutSwapBuffers();
+        cellHighlightDraw(gd->cursorGridX, gd->cursorGridY, COLOR_BLUE);
+
+        glutSwapBuffers();
+    } else {
+        // printf("frametime: %6.3lf, drawTime: %6.3lf, quads: %5d\n", delta, 0, 0);
+    }
 }
 
 void initGraphics(GameData* gd) {
@@ -451,7 +539,6 @@ void loop(GameData* gd) {
 #if MEMDEBUG == 1
     printf("malloc/frees: %d %d\n", mallocsCount, freesCount);
 #endif
-    // display(gd);
     glutPostRedisplay();
     glutMainLoopEvent();
     if (gd->minesClicked) {
@@ -464,15 +551,12 @@ void loop(GameData* gd) {
 }
 
 int main() {
+    srand(time(NULL));
 
     initDigits();
 
     GameData gd;
-
-    GameData_initDisplayData(&gd);
-    GameData_initGameData(&gd);
-
-    makeBox(&gd);
+    GameData_init(&gd);
 
     initGraphics(&gd);
     
